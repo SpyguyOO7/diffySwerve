@@ -1,7 +1,6 @@
 #include "ODriveCluster.h"
 
 ODriveCluster::ODriveCluster() {
-  // Constructor: clear data
   for(int i=0; i<NUM_MOTORS; i++) {
     axes[i].connected = false;
     axes[i].pos_estimate = 0.0f;
@@ -10,7 +9,6 @@ ODriveCluster::ODriveCluster() {
 }
 
 bool ODriveCluster::begin(int standby_pin, int boost_enable_pin) {
-  // Feather M4 CAN Power Pins
   pinMode(standby_pin, OUTPUT);
   digitalWrite(standby_pin, false);
   pinMode(boost_enable_pin, OUTPUT);
@@ -20,7 +18,6 @@ bool ODriveCluster::begin(int standby_pin, int boost_enable_pin) {
 }
 
 void ODriveCluster::processCAN() {
-  // Drain the buffer completely
   while (CAN.parsePacket()) {
     uint8_t len = CAN.packetDlc();
     uint8_t data[8];
@@ -32,7 +29,6 @@ void ODriveCluster::processCAN() {
 
     if (node_id >= NUM_MOTORS) continue;
 
-    // Heartbeat or Encoder means the motor is alive
     if (cmd_id == CMD_HEARTBEAT || cmd_id == CMD_GET_ENCODER_ESTIMATES) {
        axes[node_id].connected = true;
        axes[node_id].last_msg_time = millis();
@@ -52,9 +48,7 @@ void ODriveCluster::waitForDiscovery(uint32_t timeout_ms) {
 
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
-    processCAN(); // Keep listening
-
-    // Check if everyone is here
+    processCAN(); 
     int count = 0;
     for (int i = 0; i < NUM_MOTORS; i++) {
       if (axes[i].connected) count++;
@@ -62,7 +56,6 @@ void ODriveCluster::waitForDiscovery(uint32_t timeout_ms) {
     if (count == NUM_MOTORS) break;
   }
   
-  // Extra safety delay
   delay(1000); 
 
   Serial.println("Discovery Complete.");
@@ -85,17 +78,27 @@ void ODriveCluster::enableClosedLoop(int axis_id) {
   sendMsg(axis_id, CMD_SET_AXIS_STATE, &state, 4);
 }
 
+void ODriveCluster::setAxisState(int axis_id, int state) {
+  if (!axes[axis_id].connected) return;
+  uint32_t data = state;
+  sendMsg(axis_id, CMD_SET_AXIS_STATE, &data, 4);
+}
+
+void ODriveCluster::setControlMode(int axis_id, int32_t control_mode, int32_t input_mode) {
+  if (!axes[axis_id].connected) return;
+  uint8_t buffer[8];
+  memcpy(buffer, &control_mode, 4);
+  memcpy(buffer + 4, &input_mode, 4);
+  sendMsg(axis_id, CMD_SET_CONTROLLER_MODE, buffer, 8);
+  delayMicroseconds(200);
+}
+
 void ODriveCluster::configurePID(int axis_id, float p, float i, float d) {
   if (!axes[axis_id].connected) return;
-  
   uint8_t buffer[8] = {0};
-  
-  // Set Pos Gain (P)
   memcpy(buffer, &p, 4);
   sendMsg(axis_id, CMD_SET_POS_GAIN, buffer, 8);
   delayMicroseconds(200);
-
-  // Set Vel Gains (D and I)
   memcpy(buffer, &d, 4); 
   memcpy(buffer + 4, &i, 4);
   sendMsg(axis_id, CMD_SET_VEL_GAINS, buffer, 8);
@@ -104,21 +107,24 @@ void ODriveCluster::configurePID(int axis_id, float p, float i, float d) {
 
 void ODriveCluster::setPosition(int axis_id, float pos) {
   if (!axes[axis_id].connected) return;
-
   uint8_t buffer[8];
   int16_t vel_ff = 0;
   int16_t torque_ff = 0;
-
   memcpy(buffer, &pos, 4);
   memcpy(buffer + 4, &vel_ff, 2);
   memcpy(buffer + 6, &torque_ff, 2);
-
   sendMsg(axis_id, CMD_SET_INPUT_POS, buffer, 8);
-  // Throttling to prevent buffer overflow
-  delayMicroseconds(200); 
 }
 
-// Getters
+void ODriveCluster::setVelocity(int axis_id, float vel) {
+  if (!axes[axis_id].connected) return;
+  uint8_t buffer[8];
+  int16_t torque_ff = 0;
+  memcpy(buffer, &vel, 4);
+  memcpy(buffer + 4, &torque_ff, 2);
+  sendMsg(axis_id, CMD_SET_INPUT_VEL, buffer, 6); 
+}
+
 bool ODriveCluster::isConnected(int axis_id) { return axes[axis_id].connected; }
 float ODriveCluster::getPosition(int axis_id) { return axes[axis_id].pos_estimate; }
 float ODriveCluster::getVelocity(int axis_id) { return axes[axis_id].vel_estimate; }
@@ -134,7 +140,6 @@ void ODriveCluster::printStatus() {
     } else {
       Serial.print(" [OFFLINE]");
     }
-    
     if (i % 2 != 0) Serial.println();
     else Serial.print("\t|\t");
   }
